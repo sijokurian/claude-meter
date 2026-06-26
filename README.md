@@ -12,8 +12,8 @@ Works on **macOS** and **Ubuntu**.
 
 | Requirement | macOS | Ubuntu |
 |---|---|---|
-| Python 3.8+ | `brew install python` | `sudo apt install python3` |
-| pip3 | Included with Python | `sudo apt install python3-pip` |
+| Python 3.8+ | `brew install python` | `sudo apt install python3 python3-venv` |
+| pip3 | Included with Python | Included with Python (venv used automatically) |
 | [Claude Code](https://claude.ai/code) | Must be installed and used at least once | Same |
 | OS | macOS 12+ | Ubuntu 20.04+ with GNOME |
 
@@ -32,7 +32,7 @@ brew install python
 
 **Ubuntu**
 ```bash
-sudo apt install python3 python3-pip
+sudo apt install python3 python3-venv
 ```
 
 ### 2. Install Claude Code (if not already installed)

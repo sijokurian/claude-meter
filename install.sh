@@ -32,21 +32,28 @@ PYTHON=$(python3 -c "import sys; print(sys.executable)")
 PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 info "Using Python $PY_VER at $PYTHON"
 
-# ── Check pip is available ─────────────────────────────────────────────────
-if ! "$PYTHON" -m pip --version &>/dev/null; then
-  error "pip not found.\n  macOS:  brew install python\n  Ubuntu: sudo apt install python3-pip"
-fi
-
 # ── Install Python packages ─────────────────────────────────────────────────
 info "Installing Python dependencies..."
-install_pkg() {
-  "$PYTHON" -m pip install pystray pillow "$@" --quiet
-}
 
 if [ "$PLATFORM" = "macos" ]; then
-  install_pkg || install_pkg --break-system-packages || error "pip install failed. Try: pip3 install pystray pillow --break-system-packages"
+  # macOS: install into user site or break-system-packages if needed
+  if ! "$PYTHON" -m pip --version &>/dev/null; then
+    error "pip not found. Run: brew install python"
+  fi
+  "$PYTHON" -m pip install pystray pillow --quiet \
+    || "$PYTHON" -m pip install pystray pillow --quiet --break-system-packages \
+    || error "pip install failed. Try: pip3 install pystray pillow --break-system-packages"
 else
-  install_pkg --user || install_pkg || error "pip install failed. Try: sudo apt install python3-pip, then re-run this script."
+  # Ubuntu 22.04+ blocks pip outside a venv (PEP 668) — create one in INSTALL_DIR
+  VENV_DIR="$INSTALL_DIR/venv"
+  info "Creating virtual environment at $VENV_DIR ..."
+  "$PYTHON" -m venv "$VENV_DIR" 2>/dev/null \
+    || error "python3-venv not found. Run: sudo apt install python3-venv"
+  "$VENV_DIR/bin/pip" install pystray pillow --quiet \
+    || error "pip install failed inside venv."
+  # Use the venv Python for running the app
+  PYTHON="$VENV_DIR/bin/python"
+  info "Virtual environment ready."
 fi
 info "Python packages installed."
 
