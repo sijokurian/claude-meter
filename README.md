@@ -8,19 +8,48 @@ Works on **macOS** and **Ubuntu**.
 
 ---
 
+## Requirements
+
+| Requirement | macOS | Ubuntu |
+|---|---|---|
+| Python 3.8+ | `brew install python` | `sudo apt install python3` |
+| pip3 | Included with Python | `sudo apt install python3-pip` |
+| [Claude Code](https://claude.ai/code) | Must be installed and used at least once | Same |
+| OS | macOS 12+ | Ubuntu 20.04+ with GNOME |
+
+> **Note:** The installer can bootstrap pip automatically if it's missing — you may not need to install it manually.
+
+---
+
 ## Install
+
+### 1. Install Python 3 (if not already installed)
+
+**macOS**
+```bash
+brew install python
+```
+
+**Ubuntu**
+```bash
+sudo apt install python3 python3-pip
+```
+
+### 2. Install Claude Code (if not already installed)
+
+Follow the instructions at [claude.ai/code](https://claude.ai/code) and run at least one session so that `~/.claude/projects/` exists.
+
+### 3. Run the installer
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sijokurian/claude-meter/main/install.sh | bash
 ```
 
-That's it. The app starts immediately and auto-launches on every login.
-
-### Requirements
-
-- Python 3.8+
-- [Claude Code](https://claude.ai/code) installed and used at least once (creates `~/.claude/projects/`)
-- macOS 12+ **or** Ubuntu 20.04+ with GNOME desktop
+The script will:
+- Install `pystray` and `pillow` Python packages (no sudo needed)
+- Download the app to `~/.local/share/claude-usage/`
+- Set up auto-start on login
+- Launch the app immediately
 
 ---
 

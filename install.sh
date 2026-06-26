@@ -32,19 +32,9 @@ PYTHON=$(python3 -c "import sys; print(sys.executable)")
 PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 info "Using Python $PY_VER at $PYTHON"
 
-# ── Ensure pip is available ────────────────────────────────────────────────
-info "Checking pip..."
+# ── Check pip is available ─────────────────────────────────────────────────
 if ! "$PYTHON" -m pip --version &>/dev/null; then
-  info "pip not found — installing via get-pip.py..."
-  TMP_PIP=$(mktemp /tmp/get-pip-XXXXXX.py)
-  curl -fsSL https://bootstrap.pypa.io/get-pip.py -o "$TMP_PIP" \
-    || error "Could not download get-pip.py. Check your internet connection."
-  "$PYTHON" "$TMP_PIP" --user --quiet \
-    || error "Could not install pip.\nOn Ubuntu try: sudo apt install python3-pip"
-  rm -f "$TMP_PIP"
-  # Add ~/.local/bin to PATH for this session so pip is found immediately
-  export PATH="$HOME/.local/bin:$PATH"
-  info "pip installed."
+  error "pip not found.\n  macOS:  brew install python\n  Ubuntu: sudo apt install python3-pip"
 fi
 
 # ── Install Python packages ─────────────────────────────────────────────────
