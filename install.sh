@@ -35,18 +35,16 @@ info "Using Python $PY_VER at $PYTHON"
 # ── Ensure pip is available ────────────────────────────────────────────────
 info "Checking pip..."
 if ! "$PYTHON" -m pip --version &>/dev/null; then
-  info "pip not found — bootstrapping via ensurepip..."
-  if "$PYTHON" -m ensurepip --user 2>/dev/null; then
-    info "pip bootstrapped."
-  else
-    # Last resort: download get-pip.py (no sudo needed)
-    warn "ensurepip failed, downloading get-pip.py..."
-    TMP_PIP=$(mktemp /tmp/get-pip-XXXXXX.py)
-    curl -fsSL https://bootstrap.pypa.io/get-pip.py -o "$TMP_PIP"
-    "$PYTHON" "$TMP_PIP" --user --quiet || error "Could not install pip. On Ubuntu try: sudo apt install python3-pip"
-    rm -f "$TMP_PIP"
-    info "pip installed via get-pip.py."
-  fi
+  info "pip not found — installing via get-pip.py..."
+  TMP_PIP=$(mktemp /tmp/get-pip-XXXXXX.py)
+  curl -fsSL https://bootstrap.pypa.io/get-pip.py -o "$TMP_PIP" \
+    || error "Could not download get-pip.py. Check your internet connection."
+  "$PYTHON" "$TMP_PIP" --user --quiet \
+    || error "Could not install pip.\nOn Ubuntu try: sudo apt install python3-pip"
+  rm -f "$TMP_PIP"
+  # Add ~/.local/bin to PATH for this session so pip is found immediately
+  export PATH="$HOME/.local/bin:$PATH"
+  info "pip installed."
 fi
 
 # ── Install Python packages ─────────────────────────────────────────────────
