@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import pystray
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -141,9 +141,76 @@ def _build_symbol():
 _SYMBOL_IMAGE = _build_symbol()
 
 
-def make_icon():
-    """Return the cached Claude symbol (black-on-transparent)."""
-    return _SYMBOL_IMAGE.copy()
+def _white_version(img):
+    """Recolor a black-on-transparent symbol to white-on-transparent.
+
+    Linux tray panels are typically dark and have no template-image
+    auto-inversion (that's a macOS-only feature), so we render white.
+    """
+    img = img.convert('RGBA')
+    px = img.load()
+    for y in range(img.height):
+        for x in range(img.width):
+            r, g, b, a = px[x, y]
+            px[x, y] = (255, 255, 255, a)
+    return img
+
+
+_WHITE_SYMBOL = _white_version(_SYMBOL_IMAGE)
+
+
+def _load_font(size):
+    for path in (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    ):
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _render_linux_icon(pct):
+    """Draw the Claude symbol + percentage as one image for the Linux tray.
+
+    pystray on Linux can only show an image (no text-next-to-icon API like
+    macOS), so the percentage is rendered directly into the icon.
+    """
+    text = f"{int(round(pct))}%"
+    height = 44
+    sym_w = 38
+    pad = 6
+    font = _load_font(32)
+
+    # Measure the text
+    tmp = ImageDraw.Draw(Image.new('RGBA', (10, 10)))
+    bbox = tmp.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+    width = sym_w + pad + tw + 4
+    img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+
+    sym = _WHITE_SYMBOL.resize((sym_w, sym_w), Image.LANCZOS)
+    img.alpha_composite(sym, (0, (height - sym_w) // 2))
+
+    draw = ImageDraw.Draw(img)
+    ty = (height - th) // 2 - bbox[1]
+    draw.text((sym_w + pad, ty), text, font=font, fill=(255, 255, 255, 255))
+    return img
+
+
+def make_icon(pct=0.0):
+    """Return the tray icon image.
+
+    macOS: just the symbol — the percentage is shown as text next to it via
+    AppKit (_apply_macos_tweaks). Linux: symbol + percentage rendered together.
+    """
+    if platform.system() == 'Darwin':
+        return _SYMBOL_IMAGE.copy()
+    return _render_linux_icon(pct)
 
 
 def _apply_macos_tweaks(icon, pct):
@@ -327,7 +394,8 @@ def do_refresh():
     })
 
     if _icon is not None:
-        _icon.icon = make_icon()
+        _icon.icon = make_icon(pct)
+        _icon.title = f"Claude Usage: {pct:.0f}%"
         _icon.update_menu()
         _apply_macos_tweaks(_icon, pct)
 
