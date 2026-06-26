@@ -26,7 +26,7 @@ info "Detected platform: $PLATFORM"
 
 # ── Check Python 3 ─────────────────────────────────────────────────────────
 if ! command -v python3 &>/dev/null; then
-  error "python3 not found. Install it first:\n  macOS:  brew install python\n  Ubuntu: sudo apt install python3 python3-venv"
+  error "python3 not found. Install it first:\n  macOS:  brew install python\n  Ubuntu: sudo apt install python3 python3-pip"
 fi
 PYTHON=$(python3 -c "import sys; print(sys.executable)")
 PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
@@ -45,17 +45,19 @@ fi
 info "Installing Python dependencies..."
 # --user keeps packages in ~/.local (safe, no sudo)
 # --break-system-packages bypasses Ubuntu 22.04+ PEP 668 restriction
-"$PYTHON" -m pip install pystray pillow --user --break-system-packages --quiet \
-  || "$PYTHON" -m pip install pystray pillow --user --quiet \
+# xlib provides the X11 tray backend for pystray (no system packages needed)
+"$PYTHON" -m pip install pystray pillow xlib --user --break-system-packages --quiet \
+  || "$PYTHON" -m pip install pystray pillow xlib --user --quiet \
   || error "pip install failed. Make sure pip3 is installed and try again."
 info "Python packages installed."
 
-# ── Ubuntu: check AppIndicator (optional, soft warning only) ───────────────
+# ── Ubuntu: detect tray backend ────────────────────────────────────────────
+TRAY_ENV=""
 if [ "$PLATFORM" = "ubuntu" ]; then
   if ! python3 -c "import gi; gi.require_version('AyatanaAppIndicator3','0.1')" 2>/dev/null && \
      ! python3 -c "import gi; gi.require_version('AppIndicator3','0.1')" 2>/dev/null; then
-    warn "AppIndicator not found. Tray icon will use X11 fallback (set PYSTRAY_BACKEND=xorg if icon is missing)."
-    warn "To fix permanently (needs sudo): sudo apt install gir1.2-ayatana-appindicator3-0.1"
+    info "AppIndicator not found — using X11 backend (no extra packages needed)."
+    TRAY_ENV="PYSTRAY_BACKEND=xorg"
   fi
 fi
 
@@ -108,17 +110,24 @@ EOF
 
 else
   mkdir -p "$HOME/.config/autostart"
+  # Use 'env VAR=val python3 script' form so the env var survives autostart
+  EXEC_LINE="$PYTHON $INSTALL_DIR/claude_usage_bar.py"
+  [ -n "$TRAY_ENV" ] && EXEC_LINE="env $TRAY_ENV $EXEC_LINE"
   cat > "$HOME/.config/autostart/claude-usage.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Claude Usage
-Exec=$PYTHON $INSTALL_DIR/claude_usage_bar.py
+Exec=$EXEC_LINE
 Hidden=false
 X-GNOME-Autostart-enabled=true
 EOF
   info "Auto-start configured via ~/.config/autostart."
   # Launch in background on Ubuntu (LaunchAgent handles macOS)
-  nohup "$PYTHON" "$INSTALL_DIR/claude_usage_bar.py" >/dev/null 2>&1 &
+  if [ -n "$TRAY_ENV" ]; then
+    PYSTRAY_BACKEND=xorg nohup "$PYTHON" "$INSTALL_DIR/claude_usage_bar.py" >/dev/null 2>&1 &
+  else
+    nohup "$PYTHON" "$INSTALL_DIR/claude_usage_bar.py" >/dev/null 2>&1 &
+  fi
   info "App launched."
 fi
 
@@ -132,7 +141,11 @@ if [ "$PLATFORM" = "macos" ]; then
   echo "  Logs      : /tmp/claude_usagebar.log"
 else
   echo "  Auto-start: ~/.config/autostart/claude-usage.desktop"
-  echo "  Run again : $PYTHON $INSTALL_DIR/claude_usage_bar.py"
+  if [ -n "$TRAY_ENV" ]; then
+    echo "  Run again : $TRAY_ENV $PYTHON $INSTALL_DIR/claude_usage_bar.py"
+  else
+    echo "  Run again : $PYTHON $INSTALL_DIR/claude_usage_bar.py"
+  fi
 fi
 echo ""
 echo "  To uninstall:"
