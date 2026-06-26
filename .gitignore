@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+*.err
+
+# Settings (personal calibration — each user sets their own)
+~/.claude/menubar_settings.json
+
+# Old installer scripts (replaced by install.sh)
+install_mac.sh
+install_ubuntu.sh
+launch.sh
