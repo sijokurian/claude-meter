@@ -2,12 +2,29 @@
 """Claude Usage System Tray App — macOS and Ubuntu compatible."""
 
 import json
+import os
 import threading
 import subprocess
 import platform
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+if platform.system() == 'Linux':
+    _local_gi = str(Path.home() / '.local' / 'share' / 'girepository-1.0')
+    if _local_gi not in os.environ.get('GI_TYPELIB_PATH', ''):
+        os.environ['GI_TYPELIB_PATH'] = _local_gi + ':' + os.environ.get('GI_TYPELIB_PATH', '')
+
+    if 'PYSTRAY_BACKEND' not in os.environ:
+        try:
+            import gi
+            gi.require_version('AyatanaAppIndicator3', '0.1')
+        except (ImportError, ValueError):
+            try:
+                import gi
+                gi.require_version('AppIndicator3', '0.1')
+            except (ImportError, ValueError):
+                os.environ['PYSTRAY_BACKEND'] = 'xorg'
 
 import pystray
 from PIL import Image, ImageDraw, ImageFont
@@ -17,7 +34,8 @@ from PIL import Image, ImageDraw, ImageFont
 # ---------------------------------------------------------------------------
 WINDOW_HOURS = 5
 REFRESH_INTERVAL = 30
-DEFAULT_LIMIT = 1_000_000  # ~1M: input + output + cache_creation only (cache_read excluded)
+DEFAULT_LIMIT = 1_000_000
+CACHE_READ_WEIGHT = 1 / 150
 SETTINGS_FILE = Path.home() / '.claude' / 'menubar_settings.json'
 ICON_PATH = Path(__file__).parent / 'claude_icon.png'
 SYMBOL_PATH = Path(__file__).parent / 'claude_symbol.png'
@@ -82,14 +100,12 @@ def get_usage(window_hours=WINDOW_HOURS):
         except Exception:
             pass
 
-    # cache_read is excluded from 'total' — Anthropic does not rate-limit on
-    # cache reads (they are cheap memory reads with no GPU compute cost).
     return {
         'input': total_input,
         'output': total_output,
         'cache_create': total_cache_create,
         'cache_read': total_cache_read,
-        'total': total_input + total_output + total_cache_create,
+        'total': total_input + total_output + total_cache_create + int(total_cache_read * CACHE_READ_WEIGHT),
         'messages': message_count,
     }
 
@@ -276,7 +292,7 @@ def notify(title, subtitle, message):
 
 
 # ---------------------------------------------------------------------------
-# Dialogs — osascript on macOS, tkinter on Linux
+# Dialogs — osascript on macOS, zenity on Linux
 # ---------------------------------------------------------------------------
 
 def ask_input(title, prompt, default=''):
@@ -291,31 +307,22 @@ def ask_input(title, prompt, default=''):
         )
         try:
             out = subprocess.check_output(['osascript', '-e', script], text=True).strip()
-            # out format: "button returned:OK, text returned:VALUE"
             for part in out.split(', '):
                 if part.startswith('text returned:'):
                     return part[len('text returned:'):]
         except subprocess.CalledProcessError:
-            return None  # user cancelled
+            return None
         return None
     else:
         try:
-            import tkinter as tk
-            from tkinter import simpledialog
-            result = [None]
-
-            def run():
-                root = tk.Tk()
-                root.withdraw()
-                root.attributes('-topmost', True)
-                result[0] = simpledialog.askstring(title, prompt, initialvalue=str(default), parent=root)
-                root.destroy()
-
-            t = threading.Thread(target=run, daemon=True)
-            t.start()
-            t.join()
-            return result[0]
-        except Exception:
+            out = subprocess.check_output([
+                'zenity', '--entry',
+                '--title', title,
+                '--text', prompt,
+                '--entry-text', str(default),
+            ], text=True).strip()
+            return out
+        except (subprocess.CalledProcessError, FileNotFoundError):
             return None
 
 
@@ -333,18 +340,12 @@ def show_alert(title, message):
             pass
     else:
         try:
-            import tkinter as tk
-            from tkinter import messagebox
-
-            def run():
-                root = tk.Tk()
-                root.withdraw()
-                root.attributes('-topmost', True)
-                messagebox.showinfo(title, message, parent=root)
-                root.destroy()
-
-            threading.Thread(target=run, daemon=True).start()
-        except Exception:
+            subprocess.run([
+                'zenity', '--info',
+                '--title', title,
+                '--text', message,
+            ], check=False)
+        except FileNotFoundError:
             pass
 
 

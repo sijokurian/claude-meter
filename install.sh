@@ -45,19 +45,34 @@ fi
 info "Installing Python dependencies..."
 # --user keeps packages in ~/.local (safe, no sudo)
 # --break-system-packages bypasses Ubuntu 22.04+ PEP 668 restriction
-# xlib provides the X11 tray backend for pystray (no system packages needed)
-"$PYTHON" -m pip install pystray pillow xlib --user --break-system-packages --quiet \
-  || "$PYTHON" -m pip install pystray pillow xlib --user --quiet \
+"$PYTHON" -m pip install pystray pillow --user --break-system-packages --quiet \
+  || "$PYTHON" -m pip install pystray pillow --user --quiet \
   || error "pip install failed. Make sure pip3 is installed and try again."
 info "Python packages installed."
 
-# ── Ubuntu: detect tray backend ────────────────────────────────────────────
-TRAY_ENV=""
+# ── Ubuntu: ensure AppIndicator tray support ──────────────────────────────
 if [ "$PLATFORM" = "ubuntu" ]; then
+  GI_LOCAL="$HOME/.local/share/girepository-1.0"
+  export GI_TYPELIB_PATH="$GI_LOCAL:${GI_TYPELIB_PATH:-}"
   if ! python3 -c "import gi; gi.require_version('AyatanaAppIndicator3','0.1')" 2>/dev/null && \
      ! python3 -c "import gi; gi.require_version('AppIndicator3','0.1')" 2>/dev/null; then
-    info "AppIndicator not found — using X11 backend (no extra packages needed)."
-    TRAY_ENV="PYSTRAY_BACKEND=xorg"
+    info "Installing AppIndicator support (required for GNOME tray icon)..."
+    if ! sudo apt install -y gir1.2-ayatanaappindicator3-0.1 2>/dev/null; then
+      info "sudo not available — extracting typelib to $GI_LOCAL ..."
+      mkdir -p "$GI_LOCAL"
+      GIR_DEB=$(mktemp -d)/gir.deb
+      apt download gir1.2-ayatanaappindicator3-0.1 -o APT::Get::Download-Only=true 2>/dev/null \
+        && mv gir1.2-ayatanaappindicator3-*.deb "$GIR_DEB" 2>/dev/null
+      if [ -f "$GIR_DEB" ]; then
+        GIR_TMP=$(mktemp -d)
+        dpkg-deb -x "$GIR_DEB" "$GIR_TMP"
+        find "$GIR_TMP" -name '*.typelib' -exec cp {} "$GI_LOCAL/" \;
+        rm -rf "$GIR_TMP" "$GIR_DEB"
+        info "Typelib extracted successfully."
+      else
+        warn "Could not download gir1.2-ayatanaappindicator3-0.1.\n  Run: sudo apt install gir1.2-ayatanaappindicator3-0.1"
+      fi
+    fi
   fi
 fi
 
@@ -110,24 +125,16 @@ EOF
 
 else
   mkdir -p "$HOME/.config/autostart"
-  # Use 'env VAR=val python3 script' form so the env var survives autostart
-  EXEC_LINE="$PYTHON $INSTALL_DIR/claude_usage_bar.py"
-  [ -n "$TRAY_ENV" ] && EXEC_LINE="env $TRAY_ENV $EXEC_LINE"
   cat > "$HOME/.config/autostart/claude-usage.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Claude Usage
-Exec=$EXEC_LINE
+Exec=$PYTHON $INSTALL_DIR/claude_usage_bar.py
 Hidden=false
 X-GNOME-Autostart-enabled=true
 EOF
   info "Auto-start configured via ~/.config/autostart."
-  # Launch in background on Ubuntu (LaunchAgent handles macOS)
-  if [ -n "$TRAY_ENV" ]; then
-    PYSTRAY_BACKEND=xorg nohup "$PYTHON" "$INSTALL_DIR/claude_usage_bar.py" >/dev/null 2>&1 &
-  else
-    nohup "$PYTHON" "$INSTALL_DIR/claude_usage_bar.py" >/dev/null 2>&1 &
-  fi
+  nohup "$PYTHON" "$INSTALL_DIR/claude_usage_bar.py" >/dev/null 2>&1 &
   info "App launched."
 fi
 
@@ -141,11 +148,7 @@ if [ "$PLATFORM" = "macos" ]; then
   echo "  Logs      : /tmp/claude_usagebar.log"
 else
   echo "  Auto-start: ~/.config/autostart/claude-usage.desktop"
-  if [ -n "$TRAY_ENV" ]; then
-    echo "  Run again : $TRAY_ENV $PYTHON $INSTALL_DIR/claude_usage_bar.py"
-  else
-    echo "  Run again : $PYTHON $INSTALL_DIR/claude_usage_bar.py"
-  fi
+  echo "  Run again : $PYTHON $INSTALL_DIR/claude_usage_bar.py"
 fi
 echo ""
 echo "  To uninstall:"
