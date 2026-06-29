@@ -103,7 +103,7 @@ echo ""
 echo -e "${GREEN}✓ Claude Meter installed successfully!${NC}"
 echo ""
 echo "  Binary   : $INSTALL_DIR/claude-meter"
-echo "  No Python, no pip, no sudo required."
+echo "  Single Go binary — no extra dependencies."
 echo ""
 echo "  To uninstall:"
 if [ "$PLATFORM" = "darwin" ]; then

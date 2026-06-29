@@ -2,99 +2,72 @@ package main
 
 import (
 	"fmt"
-	"math"
+	"runtime"
 	"strconv"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/systray"
 )
 
 const (
-	windowHours     = 5
 	refreshInterval = 30 * time.Second
-	defaultLimit    = 1_000_000
-	cacheReadWeight = 1.0 / 150.0
 	httpPort        = 52413
 )
 
 type AppState struct {
-	mu            sync.Mutex
-	Pct           float64
-	Total         int
-	Limit         int
-	Messages      int
-	Input         int
-	Output        int
-	CacheCreate   int
-	CacheRead     int
-	WebPct        *float64
-	WebSource     string
-	WebLastUpdate string
-	Alerted       map[int]bool
+	mu                   sync.Mutex
+	WebPct               *float64
+	WebSource            string
+	WebLastUpdate        string
+	WebResetsAt          string
+	WebSections          []webUsageSection
+	Alerted              map[int]bool
+	NotificationsEnabled bool
 }
 
 var state = &AppState{
-	Alerted: make(map[int]bool),
+	Alerted:              make(map[int]bool),
+	NotificationsEnabled: true,
 }
 
 // Menu items
 var (
-	mUsage      *systray.MenuItem
-	mMessages   *systray.MenuItem
-	mInput      *systray.MenuItem
-	mOutput     *systray.MenuItem
-	mCacheCreate *systray.MenuItem
-	mCacheRead  *systray.MenuItem
-	mWebUsage   *systray.MenuItem
-	mWebLast    *systray.MenuItem
-	mWindow     *systray.MenuItem
-	mLimit      *systray.MenuItem
-	mSetLimit   *systray.MenuItem
-	mCalibrate  *systray.MenuItem
-	mResetAlerts *systray.MenuItem
-	mRefresh    *systray.MenuItem
-	mQuit       *systray.MenuItem
+	mUsage         *systray.MenuItem
+	mSession       *systray.MenuItem
+	mWeekly        *systray.MenuItem
+	mSyncStatus    *systray.MenuItem
+	mNotifications *systray.MenuItem
+	mRefresh       *systray.MenuItem
+	mQuit          *systray.MenuItem
 )
 
 func main() {
 	s := loadSettings()
-	state.Limit = s.Limit
+	state.NotificationsEnabled = s.NotificationsEnabled
 	initIcons()
 	systray.Run(onReady, onExit)
 }
 
 func onReady() {
-	systray.SetIcon(makeIcon(0))
-	systray.SetTooltip("Claude Usage")
+	systray.SetIcon(errorIconData)
+	systray.SetTooltip("Claude Meter — waiting for extension")
 
-	mUsage = systray.AddMenuItem("Usage: ...", "")
+	mUsage = systray.AddMenuItem("Extension not connected", "")
 	mUsage.Disable()
-	mMessages = systray.AddMenuItem("Messages (5h): 0", "")
-	mMessages.Disable()
+	mSession = systray.AddMenuItem("  1. Install the browser extension", "")
+	mSession.Disable()
+	mWeekly = systray.AddMenuItem("  2. Login to claude.ai in Chrome", "")
+	mWeekly.Disable()
 	systray.AddSeparator()
-	mInput = systray.AddMenuItem("  Input:          0", "")
-	mInput.Disable()
-	mOutput = systray.AddMenuItem("  Output:         0", "")
-	mOutput.Disable()
-	mCacheCreate = systray.AddMenuItem("  Cache created:  0", "")
-	mCacheCreate.Disable()
-	mCacheRead = systray.AddMenuItem("  Cache read:     0", "")
-	mCacheRead.Disable()
-	systray.AddSeparator()
-	mWebUsage = systray.AddMenuItem("Web: waiting for extension...", "")
-	mWebUsage.Disable()
-	mWebLast = systray.AddMenuItem("  Last sync: —", "")
-	mWebLast.Disable()
-	systray.AddSeparator()
-	mWindow = systray.AddMenuItem(fmt.Sprintf("Window: last %d hours", windowHours), "")
-	mWindow.Disable()
-	mLimit = systray.AddMenuItem(fmt.Sprintf("Limit: %s tokens", fmtTokens(state.Limit)), "")
-	mLimit.Disable()
-	mSetLimit = systray.AddMenuItem("Set Limit...", "")
-	mCalibrate = systray.AddMenuItem("Calibrate from Website...", "")
-	mResetAlerts = systray.AddMenuItem("Reset Alerts", "")
+	mSyncStatus = systray.AddMenuItem("Last sync: —", "")
+	mSyncStatus.Disable()
+	if state.NotificationsEnabled {
+		mNotifications = systray.AddMenuItem("Disable Notifications", "")
+	} else {
+		mNotifications = systray.AddMenuItem("Enable Notifications", "")
+	}
 	systray.AddSeparator()
 	mRefresh = systray.AddMenuItem("Refresh Now", "")
 	mQuit = systray.AddMenuItem("Quit", "")
@@ -106,113 +79,186 @@ func onReady() {
 
 func onExit() {}
 
+var firstRefreshDone atomic.Bool
+
 func refreshLoop() {
 	doRefresh()
+	firstRefreshDone.Store(true)
 	ticker := time.NewTicker(refreshInterval)
+	defer ticker.Stop()
 	for range ticker.C {
 		doRefresh()
 	}
 }
 
+func isConnected() bool {
+	return state.WebPct != nil || len(state.WebSections) > 0
+}
+
 func doRefresh() {
-	usage := getUsage(windowHours)
-
 	state.mu.Lock()
-	state.Total = usage.Total
-	state.Messages = usage.Messages
-	state.Input = usage.Input
-	state.Output = usage.Output
-	state.CacheCreate = usage.CacheCreate
-	state.CacheRead = usage.CacheRead
-
-	pct := 0.0
-	if state.Limit > 0 {
-		pct = math.Min(100.0, float64(usage.Total)/float64(state.Limit)*100.0)
-	}
-	state.Pct = pct
 	alerted := state.Alerted
-	limit := state.Limit
-	total := usage.Total
+	connected := isConnected()
+
+	sessionPct := 0.0
+	if connected {
+		for _, sec := range state.WebSections {
+			if sec.Type == "session" {
+				sessionPct = sec.Percentage
+				break
+			}
+		}
+		if sessionPct == 0 && state.WebPct != nil {
+			sessionPct = *state.WebPct
+		}
+	}
 	state.mu.Unlock()
 
-	systray.SetIcon(makeIcon(pct))
-	systray.SetTooltip(fmt.Sprintf("Claude Usage: %.0f%%", pct))
-	if isRunningOnMac() {
-		systray.SetTitle(fmt.Sprintf(" %d%%", int(pct)))
+	if connected {
+		systray.SetIcon(trayIconData)
+		systray.SetTooltip(fmt.Sprintf("Claude Usage: %.0f%%", sessionPct))
+		if isRunningOnMac() {
+			systray.SetTitle(fmt.Sprintf(" %d%%", int(sessionPct)))
+		} else {
+			iconName, themePath := writeIconFile(sessionPct)
+			systray.SetIconByName(iconName, themePath)
+			systray.SetLabel(fmt.Sprintf("%d%%", int(sessionPct)))
+		}
+	} else {
+		systray.SetIcon(errorIconData)
+		systray.SetTooltip("Claude Meter — extension not connected")
+		if isRunningOnMac() {
+			systray.SetTitle(" —")
+		} else {
+			iconName, themePath := writeErrorIconFile()
+			systray.SetIconByName(iconName, themePath)
+			systray.SetLabel("—")
+		}
 	}
 
 	updateMenu()
 
-	crossed := int(pct/10) * 10
-	for m := 10; m <= crossed; m += 10 {
-		if !alerted[m] {
-			state.mu.Lock()
-			state.Alerted[m] = true
-			state.mu.Unlock()
+	if connected {
+		crossed := int(sessionPct/10) * 10
+		highestNew := 0
+		for m := 10; m <= crossed; m += 10 {
+			if !alerted[m] {
+				highestNew = m
+				state.mu.Lock()
+				state.Alerted[m] = true
+				state.mu.Unlock()
+			}
+		}
 
+		state.mu.Lock()
+		notifEnabled := state.NotificationsEnabled
+		sessionReset := ""
+		for _, sec := range state.WebSections {
+			if sec.Type == "session" && sec.ResetsAt != "" {
+				sessionReset = sec.ResetsAt
+				break
+			}
+		}
+		state.mu.Unlock()
+
+		if highestNew > 0 && firstRefreshDone.Load() && notifEnabled {
 			var msg string
 			switch {
-			case m >= 90:
+			case highestNew >= 90:
 				msg = "Approaching limit — consider pausing!"
-			case m >= 70:
+			case highestNew >= 70:
 				msg = "Getting close to your limit."
 			default:
-				msg = fmt.Sprintf("Used %s tokens in the last %d hours.", fmtTokens(total), windowHours)
+				if sessionReset != "" {
+					msg = fmt.Sprintf("Session %s.", sessionReset)
+				} else {
+					msg = "Current session usage."
+				}
 			}
-			go notify("Claude Usage", fmt.Sprintf("%d%% of limit reached", m), msg)
+			go notify("Claude Usage", fmt.Sprintf("%d%% of limit reached.", highestNew), msg)
 		}
 	}
-	_ = limit
 }
 
 func updateMenu() {
 	state.mu.Lock()
-	mUsage.SetTitle(fmt.Sprintf("Usage: %s / %s  (%.1f%%)", fmtTokens(state.Total), fmtTokens(state.Limit), state.Pct))
-	mMessages.SetTitle(fmt.Sprintf("Messages (5h): %d", state.Messages))
-	mInput.SetTitle(fmt.Sprintf("  Input:          %s", fmtTokens(state.Input)))
-	mOutput.SetTitle(fmt.Sprintf("  Output:         %s", fmtTokens(state.Output)))
-	mCacheCreate.SetTitle(fmt.Sprintf("  Cache created:  %s", fmtTokens(state.CacheCreate)))
-	mCacheRead.SetTitle(fmt.Sprintf("  Cache read:     %s", fmtTokens(state.CacheRead)))
-	mLimit.SetTitle(fmt.Sprintf("Limit: %s tokens", fmtTokens(state.Limit)))
+	defer state.mu.Unlock()
 
-	if state.WebPct != nil {
-		mWebUsage.SetTitle(fmt.Sprintf("Web (claude.ai): %.1f%%", *state.WebPct))
+	connected := isConnected()
+
+	if !connected {
+		mUsage.SetTitle("Extension not connected")
+		mSession.SetTitle("  1. Install the browser extension")
+		mWeekly.SetTitle("  2. Login to claude.ai in Chrome")
+		mSyncStatus.SetTitle("Last sync: —")
 	} else {
-		mWebUsage.SetTitle("Web: waiting for extension...")
-	}
-
-	if state.WebLastUpdate != "" {
-		t, err := time.Parse(time.RFC3339, state.WebLastUpdate)
-		if err != nil {
-			t, err = time.Parse(time.RFC3339Nano, state.WebLastUpdate)
-		}
-		if err == nil {
-			ago := time.Since(t)
-			mins := int(ago.Minutes())
-			switch {
-			case mins < 1:
-				mWebLast.SetTitle("  Last sync: just now")
-			case mins < 60:
-				mWebLast.SetTitle(fmt.Sprintf("  Last sync: %dm ago", mins))
-			default:
-				mWebLast.SetTitle(fmt.Sprintf("  Last sync: %dh %dm ago", mins/60, mins%60))
+		sessPct := -1.0
+		sessionReset := ""
+		weeklyPct := -1.0
+		weeklyReset := ""
+		for _, sec := range state.WebSections {
+			switch sec.Type {
+			case "session":
+				sessPct = sec.Percentage
+				sessionReset = sec.ResetsAt
+			case "weekly_all":
+				weeklyPct = sec.Percentage
+				weeklyReset = sec.ResetsAt
 			}
 		}
-	} else {
-		mWebLast.SetTitle("  Last sync: —")
+
+		displayPct := 0.0
+		if sessPct >= 0 {
+			displayPct = sessPct
+		} else if state.WebPct != nil {
+			displayPct = *state.WebPct
+		}
+
+		mUsage.SetTitle(fmt.Sprintf("Usage: %.0f%%", displayPct))
+
+		if sessPct >= 0 && sessionReset != "" {
+			mSession.SetTitle(fmt.Sprintf("  Session: %.0f%% — %s", sessPct, sessionReset))
+		} else if sessPct >= 0 {
+			mSession.SetTitle(fmt.Sprintf("  Session: %.0f%%", sessPct))
+		} else {
+			mSession.SetTitle("  Session: —")
+		}
+
+		if weeklyPct >= 0 && weeklyReset != "" {
+			mWeekly.SetTitle(fmt.Sprintf("  Weekly: %.0f%% — %s", weeklyPct, weeklyReset))
+		} else if weeklyPct >= 0 {
+			mWeekly.SetTitle(fmt.Sprintf("  Weekly: %.0f%%", weeklyPct))
+		} else {
+			mWeekly.SetTitle("  Weekly: —")
+		}
+
+		if state.WebLastUpdate != "" {
+			t, err := time.Parse(time.RFC3339, state.WebLastUpdate)
+			if err != nil {
+				t, err = time.Parse(time.RFC3339Nano, state.WebLastUpdate)
+			}
+			if err == nil {
+				ago := time.Since(t)
+				mins := int(ago.Minutes())
+				switch {
+				case mins < 1:
+					mSyncStatus.SetTitle("Last sync: just now")
+				case mins < 60:
+					mSyncStatus.SetTitle(fmt.Sprintf("Last sync: %dm ago", mins))
+				default:
+					mSyncStatus.SetTitle(fmt.Sprintf("Last sync: %dh %dm ago", mins/60, mins%60))
+				}
+			}
+		}
 	}
-	state.mu.Unlock()
+
 }
 
 func handleClicks() {
 	for {
 		select {
-		case <-mSetLimit.ClickedCh:
-			go onSetLimit()
-		case <-mCalibrate.ClickedCh:
-			go onCalibrate()
-		case <-mResetAlerts.ClickedCh:
-			go onResetAlerts()
+		case <-mNotifications.ClickedCh:
+			go onToggleNotifications()
 		case <-mRefresh.ClickedCh:
 			go doRefresh()
 		case <-mQuit.ClickedCh:
@@ -221,67 +267,21 @@ func handleClicks() {
 	}
 }
 
-func onSetLimit() {
+func onToggleNotifications() {
 	state.mu.Lock()
-	current := state.Limit
+	state.NotificationsEnabled = !state.NotificationsEnabled
+	enabled := state.NotificationsEnabled
 	state.mu.Unlock()
 
-	val, ok := askInput("Set Usage Limit",
-		"Enter token limit for 5-hour window\n(e.g. 22800000 for 22.8M):",
-		strconv.Itoa(current))
-	if !ok {
-		return
+	if enabled {
+		mNotifications.SetTitle("Disable Notifications")
+	} else {
+		mNotifications.SetTitle("Enable Notifications")
 	}
 
-	val = strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(val), ",", ""), "_", "")
-	newLimit, err := strconv.Atoi(val)
-	if err != nil || newLimit <= 0 {
-		showAlert("Invalid value", "Please enter a positive number.")
-		return
-	}
-
-	state.mu.Lock()
-	state.Limit = newLimit
-	state.Alerted = make(map[int]bool)
-	state.mu.Unlock()
-	saveSettings(Settings{Limit: newLimit})
-	doRefresh()
-}
-
-func onCalibrate() {
-	state.mu.Lock()
-	total := state.Total
-	state.mu.Unlock()
-
-	val, ok := askInput("Calibrate from Website",
-		fmt.Sprintf("Open claude.ai and check your current usage %%.\nEnter that percentage to calibrate the token limit.\n\nCurrent measured tokens: %s", fmtTokens(total)),
-		"")
-	if !ok || total == 0 {
-		return
-	}
-
-	val = strings.TrimSpace(strings.TrimRight(val, "%"))
-	sitePct, err := strconv.ParseFloat(val, 64)
-	if err != nil || sitePct <= 0 || sitePct > 100 {
-		showAlert("Invalid value", "Enter a percentage between 1 and 100.")
-		return
-	}
-
-	newLimit := int(float64(total) / (sitePct / 100.0))
-	state.mu.Lock()
-	state.Limit = newLimit
-	state.Alerted = make(map[int]bool)
-	state.mu.Unlock()
-	saveSettings(Settings{Limit: newLimit})
-	doRefresh()
-	showAlert("Calibrated", fmt.Sprintf("Token limit set to %s\nbased on %.1f%% from website.", fmtTokens(newLimit), sitePct))
-}
-
-func onResetAlerts() {
-	state.mu.Lock()
-	state.Alerted = make(map[int]bool)
-	state.mu.Unlock()
-	notify("Claude Usage", "Alerts reset", "You'll be notified again at each 10% milestone.")
+	s := loadSettings()
+	s.NotificationsEnabled = enabled
+	saveSettings(s)
 }
 
 func fmtTokens(n int) string {
@@ -295,5 +295,5 @@ func fmtTokens(n int) string {
 }
 
 func isRunningOnMac() bool {
-	return false // overridden by build tag if needed
+	return runtime.GOOS == "darwin"
 }

@@ -16,10 +16,19 @@ var (
 	maxPayloads    = 10
 )
 
-type webUsageRequest struct {
+type webUsageSection struct {
+	Label      string  `json:"label"`
 	Percentage float64 `json:"percentage"`
-	Source     string  `json:"source"`
-	Timestamp  string  `json:"timestamp"`
+	ResetsAt   string  `json:"resets_at"`
+	Type       string  `json:"type"`
+}
+
+type webUsageRequest struct {
+	Percentage float64           `json:"percentage"`
+	Source     string            `json:"source"`
+	Timestamp  string            `json:"timestamp"`
+	ResetsAt   string            `json:"resets_at"`
+	Sections   []webUsageSection `json:"sections"`
 }
 
 func startServer() {
@@ -77,29 +86,27 @@ func handleWebUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	payloadsMu.Unlock()
 
-	log.Printf("[claude-meter] POST /api/web-usage: %.1f%% via %s", req.Percentage, req.Source)
+	// Filter out unclassified sections
+	var validSections []webUsageSection
+	for _, sec := range req.Sections {
+		if sec.Type != "" && sec.Type != "unknown" {
+			validSections = append(validSections, sec)
+		}
+	}
+
+	log.Printf("[claude-meter] POST /api/web-usage: %.1f%% via %s (%d sections)", req.Percentage, req.Source, len(validSections))
 
 	if req.Percentage > 0 && req.Percentage <= 100 {
 		state.mu.Lock()
 		state.WebPct = &req.Percentage
 		state.WebSource = req.Source
+		state.WebResetsAt = req.ResetsAt
+		state.WebSections = validSections
 		ts := req.Timestamp
 		if ts == "" {
 			ts = time.Now().UTC().Format(time.RFC3339)
 		}
 		state.WebLastUpdate = ts
-
-		if state.Total > 0 {
-			newLimit := int(float64(state.Total) / (req.Percentage / 100.0))
-			if newLimit != state.Limit {
-				state.Limit = newLimit
-				state.Alerted = make(map[int]bool)
-				log.Printf("[claude-meter] Auto-calibrated limit to %d from web %.1f%%", newLimit, req.Percentage)
-				go func() {
-					saveSettings(Settings{Limit: newLimit})
-				}()
-			}
-		}
 		state.mu.Unlock()
 		go doRefresh()
 	} else if req.Percentage == 0 {
@@ -107,6 +114,8 @@ func handleWebUsage(w http.ResponseWriter, r *http.Request) {
 		zero := 0.0
 		state.WebPct = &zero
 		state.WebSource = req.Source
+		state.WebResetsAt = req.ResetsAt
+		state.WebSections = validSections
 		state.WebLastUpdate = req.Timestamp
 		state.mu.Unlock()
 		updateMenu()
@@ -119,10 +128,10 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	state.mu.Lock()
 	resp := map[string]interface{}{
 		"app":             "claude-meter",
-		"cli_pct":         state.Pct,
 		"web_pct":         state.WebPct,
 		"web_source":      state.WebSource,
 		"web_last_update": state.WebLastUpdate,
+		"web_sections":    state.WebSections,
 	}
 	state.mu.Unlock()
 	jsonResponse(w, 200, resp)
@@ -131,17 +140,10 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 func handleDebug(w http.ResponseWriter, r *http.Request) {
 	state.mu.Lock()
 	stateMap := map[string]interface{}{
-		"pct":             state.Pct,
-		"total":           state.Total,
-		"limit":           state.Limit,
-		"messages":        state.Messages,
-		"input":           state.Input,
-		"output":          state.Output,
-		"cache_create":    state.CacheCreate,
-		"cache_read":      state.CacheRead,
 		"web_pct":         state.WebPct,
 		"web_source":      state.WebSource,
 		"web_last_update": state.WebLastUpdate,
+		"web_sections":    state.WebSections,
 	}
 	state.mu.Unlock()
 

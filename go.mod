@@ -12,3 +12,5 @@ require (
 	golang.org/x/sys v0.15.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 )
+
+replace fyne.io/systray v1.12.2 => ./systray_fork
