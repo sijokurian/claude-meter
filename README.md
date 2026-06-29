@@ -1,80 +1,69 @@
 # claude-meter
 
-Real-time Claude Code token usage in your menu bar.
+Real-time Claude Code token usage in your menu bar. Single binary — no Python, no pip, no sudo.
 
 ![macOS menu bar showing Claude usage at 39%](https://raw.githubusercontent.com/sijokurian/claude-meter/main/claude_icon.png)
 
-Works on **macOS** and **Ubuntu**.
-
----
-
-## Requirements
-
-| Requirement | macOS | Ubuntu |
-|---|---|---|
-| Python 3 | `brew install python` | `sudo apt install python3` |
-| pip3 | Included with Python | `sudo apt install python3-pip` |
-| [Claude Code](https://claude.ai/code) | Must be installed and used at least once | Same |
-| OS | macOS 12+ | Ubuntu 20.04+ with GNOME |
+Works on **macOS** and **Ubuntu/Linux**.
 
 ---
 
 ## Install
 
-### 1. Install Python 3 and pip3 (if not already installed)
-
-**macOS**
-```bash
-brew install python
-```
-
-**Ubuntu**
-```bash
-sudo apt install python3 python3-pip
-```
-
-### 2. Install Claude Code (if not already installed)
-
-Follow the instructions at [claude.ai/code](https://claude.ai/code) and run at least one session so that `~/.claude/projects/` exists.
-
-### 3. Run the installer
+### One-liner
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sijokurian/claude-meter/main/install.sh | bash
 ```
 
-The script will:
-- Install `pystray` and `pillow` Python packages (no sudo needed)
-- Download the app to `~/.local/share/claude-usage/`
-- Set up auto-start on login
-- Launch the app immediately
+The script downloads the binary to `~/.local/bin/claude-meter`, sets up auto-start on login, and launches the app.
+
+### Manual
+
+Download the binary for your platform from [Releases](https://github.com/sijokurian/claude-meter/releases), make it executable, and run:
+
+```bash
+chmod +x claude-meter
+./claude-meter
+```
+
+### Build from source
+
+```bash
+git clone https://github.com/sijokurian/claude-meter.git
+cd claude-meter
+go build -o claude-meter .
+./claude-meter
+```
+
+**Build requirements:** Go 1.22+, GTK3 dev headers on Linux (`sudo apt install libgtk-3-dev libayatana-appindicator3-dev`).
 
 ---
 
 ## What it shows
 
-The menu bar displays the Claude logo with your current usage percentage next to it:
+The menu bar displays the Claude logo with your current usage percentage:
 
 ```
-[Claude icon]  39%
+[Claude icon]  7%
 ```
 
 Click the icon to expand:
 
 ```
-Usage: 391K / 1.00M  (39.1%)
-Messages (5h): 42
+Usage: 3.07M / 43.87M  (7.0%)
+Messages (5h): 744
 
-  Input:          269
-  Output:         82.9K
-  Cache created:  270K
-  Cache read:     10.82M
+  Input:          2.9K
+  Output:         249.0K
+  Cache created:  2.35M
+  Cache read:     69.74M
 
-Web (claude.ai): 39.0%
-  Last sync: 2m ago
+Web (claude.ai): 7.0%
+  Last sync: just now
 
 Window: last 5 hours
-Limit: 1.00M tokens
+Limit: 43.87M tokens
 Set Limit...
 Calibrate from Website...
 Reset Alerts
@@ -85,21 +74,19 @@ Quit
 
 ### Alerts
 
-You get a macOS/desktop notification at every 10% milestone (10%, 20%, … 90%).
+Desktop notification at every 10% milestone (10%, 20%, … 90%).
 
 ---
 
 ## How it works
 
-Claude Code writes every API response to `~/.claude/projects/**/*.jsonl`. claude-meter reads those files, sums `input_tokens + output_tokens + cache_creation_input_tokens` (cache reads are excluded — Anthropic does not rate-limit on them), and divides by your token limit.
-
-The default limit is **1,000,000 tokens per 5-hour rolling window**, which matches a standard Claude subscription.
+Claude Code writes every API response to `~/.claude/projects/**/*.jsonl`. claude-meter reads those files, sums `input_tokens + output_tokens + cache_creation_input_tokens` (cache reads weighted at 1/150), and divides by your token limit.
 
 ---
 
 ## Browser Extension (auto-sync with claude.ai)
 
-Instead of manually calibrating, you can install the **Claude Meter** browser extension. It reads your usage percentage directly from claude.ai and sends it to the tray app, which auto-calibrates the token limit so both stay in sync.
+Install the **Claude Meter** browser extension to automatically sync usage from claude.ai. It reads the usage percentage and sends it to the tray app, which auto-calibrates the token limit.
 
 ### Install the extension
 
@@ -109,25 +96,16 @@ Instead of manually calibrating, you can install the **Claude Meter** browser ex
 4. Select the `extension/` folder inside this repo
 5. Open [claude.ai](https://claude.ai) — the extension starts syncing automatically
 
-The extension popup shows connection status and the last synced value. The tray app listens on `localhost:52413` for data from the extension.
-
-### How it works
-
-The extension runs two detection strategies on claude.ai:
-
-- **Fetch interception** — patches `window.fetch` in the page context to capture API responses containing usage data
-- **DOM scanning** — periodically checks for progress bars and usage-related text on the page
-
-When usage data is found, it's sent to the tray app over localhost. The tray app then auto-calibrates the CLI token limit so the displayed percentage matches claude.ai.
+The tray app listens on `localhost:52413` for data from the extension.
 
 ---
 
 ## Manual Calibration
 
-If you don't want the extension, you can calibrate manually:
+If you don't want the extension:
 
 1. Open [claude.ai](https://claude.ai) and note your usage %
-2. Click the menu bar icon → **Calibrate from Website…**
+2. Click the tray icon → **Calibrate from Website…**
 3. Enter the percentage — the app recalculates your exact limit
 
 ---
@@ -137,24 +115,10 @@ If you don't want the extension, you can calibrate manually:
 **macOS**
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.claude.usagebar.plist
-rm -rf ~/.local/share/claude-usage ~/Library/LaunchAgents/com.claude.usagebar.plist
+rm -f ~/.local/bin/claude-meter ~/Library/LaunchAgents/com.claude.usagebar.plist
 ```
 
-**Ubuntu**
+**Linux**
 ```bash
-rm -rf ~/.local/share/claude-usage ~/.config/autostart/claude-usage.desktop
-```
-
----
-
-## Ubuntu notes
-
-The tray icon requires AppIndicator support. If the icon doesn't appear:
-
-```bash
-# Option 1 — install AppIndicator (needs sudo, one-time)
-sudo apt install gir1.2-ayatana-appindicator3-0.1
-
-# Option 2 — use X11 fallback (no sudo, X11 sessions only)
-PYSTRAY_BACKEND=xorg python3 ~/.local/share/claude-usage/claude_usage_bar.py
+rm -f ~/.local/bin/claude-meter ~/.config/autostart/claude-usage.desktop
 ```

@@ -1,4 +1,8 @@
-# Python
+# Go binary
+claude-meter
+claude-meter-*
+
+# Python (legacy)
 __pycache__/
 *.pyc
 *.pyo
