@@ -8,6 +8,7 @@ import subprocess
 import platform
 import sys
 from datetime import datetime, timezone, timedelta
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 if platform.system() == 'Linux':
@@ -39,6 +40,7 @@ CACHE_READ_WEIGHT = 1 / 150
 SETTINGS_FILE = Path.home() / '.claude' / 'menubar_settings.json'
 ICON_PATH = Path(__file__).parent / 'claude_icon.png'
 SYMBOL_PATH = Path(__file__).parent / 'claude_symbol.png'
+HTTP_PORT = 52413
 
 # ---------------------------------------------------------------------------
 # Settings
@@ -350,6 +352,98 @@ def show_alert(title, message):
 
 
 # ---------------------------------------------------------------------------
+# HTTP server — receives web usage data from the browser extension
+# ---------------------------------------------------------------------------
+
+_last_payloads = []
+
+class _UsageHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path == '/api/web-usage':
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                body = json.loads(self.rfile.read(length))
+                print(f"[claude-meter] POST /api/web-usage: {json.dumps(body, default=str)[:500]}", file=sys.stderr, flush=True)
+                _last_payloads.append(body)
+                if len(_last_payloads) > 10:
+                    _last_payloads.pop(0)
+                pct = body.get('percentage')
+                if isinstance(pct, (int, float)) and 0 < pct <= 100:
+                    _state['web_pct'] = round(pct, 1)
+                    _state['web_source'] = body.get('source', 'extension')
+                    _state['web_last_update'] = body.get('timestamp', datetime.now(timezone.utc).isoformat())
+                    _state['web_raw'] = body.get('raw')
+                    # Auto-calibrate CLI limit from web percentage
+                    total = _state.get('total', 0)
+                    if total > 0:
+                        new_limit = int(total / (pct / 100.0))
+                        if new_limit != _state['limit']:
+                            _state['limit'] = new_limit
+                            _alerted.clear()
+                            save_settings({'limit': new_limit})
+                            print(f"[claude-meter] Auto-calibrated limit to {new_limit} from web {pct}%", file=sys.stderr, flush=True)
+                    do_refresh()
+                elif pct == 0:
+                    _state['web_pct'] = 0.0
+                    _state['web_source'] = body.get('source', 'extension')
+                    _state['web_last_update'] = body.get('timestamp', datetime.now(timezone.utc).isoformat())
+                    if _icon is not None:
+                        _icon.update_menu()
+                self._json_response(200, {'ok': True})
+            except Exception as e:
+                print(f"[claude-meter] POST error: {e}", file=sys.stderr, flush=True)
+                self._json_response(400, {'error': 'bad request'})
+        else:
+            self._json_response(404, {'error': 'not found'})
+
+    def do_GET(self):
+        if self.path == '/api/status':
+            self._json_response(200, {
+                'app': 'claude-meter',
+                'cli_pct': _state['pct'],
+                'web_pct': _state.get('web_pct'),
+                'web_source': _state.get('web_source'),
+                'web_last_update': _state.get('web_last_update'),
+                'web_raw': _state.get('web_raw'),
+            })
+        elif self.path == '/api/debug':
+            self._json_response(200, {
+                'last_payloads': _last_payloads,
+                'state': {k: v for k, v in _state.items()},
+            })
+        else:
+            self._json_response(404, {'error': 'not found'})
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors_headers()
+        self.end_headers()
+
+    def _json_response(self, code, data):
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self._cors_headers()
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
+    def _cors_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+
+    def log_message(self, format, *args):
+        pass
+
+
+def _start_http_server():
+    try:
+        server = HTTPServer(('127.0.0.1', HTTP_PORT), _UsageHandler)
+        server.serve_forever()
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # Application state
 # ---------------------------------------------------------------------------
 
@@ -362,6 +456,10 @@ _state = {
     'output': 0,
     'cache_create': 0,
     'cache_read': 0,
+    'web_pct': None,
+    'web_source': None,
+    'web_last_update': None,
+    'web_raw': None,
 }
 _alerted = set()
 _icon = None
@@ -509,6 +607,28 @@ def t_window(item):
 def t_limit(item):
     return f"Limit: {fmt(_state['limit'])} tokens"
 
+def t_web_usage(item):
+    pct = _state.get('web_pct')
+    if pct is None:
+        return "Web: waiting for extension..."
+    return f"Web (claude.ai): {pct:.1f}%"
+
+def t_web_last(item):
+    ts = _state.get('web_last_update')
+    if not ts:
+        return "  Last sync: —"
+    try:
+        dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        ago = datetime.now(timezone.utc) - dt
+        mins = int(ago.total_seconds() // 60)
+        if mins < 1:
+            return "  Last sync: just now"
+        if mins < 60:
+            return f"  Last sync: {mins}m ago"
+        return f"  Last sync: {mins // 60}h {mins % 60}m ago"
+    except Exception:
+        return f"  Last sync: {ts}"
+
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -516,8 +636,8 @@ def t_limit(item):
 
 def setup(icon):
     icon.visible = True
+    threading.Thread(target=_start_http_server, daemon=True).start()
     do_refresh()
-    # Template mode must be applied after the first icon image is set
     _apply_macos_tweaks(icon, _state['pct'])
 
 
@@ -533,6 +653,9 @@ def main():
         pystray.MenuItem(t_output, None, enabled=False),
         pystray.MenuItem(t_cache_create, None, enabled=False),
         pystray.MenuItem(t_cache_read, None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(t_web_usage, None, enabled=False),
+        pystray.MenuItem(t_web_last, None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(t_window, None, enabled=False),
         pystray.MenuItem(t_limit, None, enabled=False),

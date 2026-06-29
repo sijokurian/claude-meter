@@ -70,6 +70,9 @@ Messages (5h): 42
   Cache created:  270K
   Cache read:     10.82M
 
+Web (claude.ai): 39.0%
+  Last sync: 2m ago
+
 Window: last 5 hours
 Limit: 1.00M tokens
 Set Limit...
@@ -94,9 +97,34 @@ The default limit is **1,000,000 tokens per 5-hour rolling window**, which match
 
 ---
 
-## Calibration
+## Browser Extension (auto-sync with claude.ai)
 
-If the percentage doesn't match claude.ai:
+Instead of manually calibrating, you can install the **Claude Meter** browser extension. It reads your usage percentage directly from claude.ai and sends it to the tray app, which auto-calibrates the token limit so both stay in sync.
+
+### Install the extension
+
+1. Open `chrome://extensions` in Chrome (or any Chromium-based browser)
+2. Enable **Developer mode** (toggle in the top-right)
+3. Click **Load unpacked**
+4. Select the `extension/` folder inside this repo
+5. Open [claude.ai](https://claude.ai) — the extension starts syncing automatically
+
+The extension popup shows connection status and the last synced value. The tray app listens on `localhost:52413` for data from the extension.
+
+### How it works
+
+The extension runs two detection strategies on claude.ai:
+
+- **Fetch interception** — patches `window.fetch` in the page context to capture API responses containing usage data
+- **DOM scanning** — periodically checks for progress bars and usage-related text on the page
+
+When usage data is found, it's sent to the tray app over localhost. The tray app then auto-calibrates the CLI token limit so the displayed percentage matches claude.ai.
+
+---
+
+## Manual Calibration
+
+If you don't want the extension, you can calibrate manually:
 
 1. Open [claude.ai](https://claude.ai) and note your usage %
 2. Click the menu bar icon → **Calibrate from Website…**
