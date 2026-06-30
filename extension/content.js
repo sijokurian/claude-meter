@@ -8,7 +8,9 @@
 
 const TRAY_PORT = 52413;
 const TRAY_URL = `http://127.0.0.1:${TRAY_PORT}/api/web-usage`;
-const DEBUG = true;
+const DEBUG = false;
+
+let lastUsageUrl = '';
 
 function dbg(...args) {
   if (DEBUG) console.log('[claude-meter]', ...args);
@@ -18,8 +20,31 @@ window.addEventListener('message', (event) => {
   if (event.source !== window) return;
   if (event.data?.type !== 'CLAUDE_METER_FETCH') return;
   dbg('API intercepted:', event.data.url);
+  if (event.data.data?.limits) {
+    lastUsageUrl = event.data.url;
+  }
   processUsageResponse(event.data.data);
 });
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'REFRESH_USAGE') {
+    fetchUsageDirect();
+  }
+});
+
+async function fetchUsageDirect() {
+  if (!lastUsageUrl) return;
+  dbg('Background fetch:', lastUsageUrl);
+  try {
+    const resp = await fetch(lastUsageUrl, { credentials: 'include' });
+    if (resp.ok) {
+      const data = await resp.json();
+      processUsageResponse(data);
+    }
+  } catch (e) {
+    dbg('Background fetch failed:', e.message);
+  }
+}
 
 function processUsageResponse(data) {
   if (!data || !Array.isArray(data.limits)) return;

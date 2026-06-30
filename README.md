@@ -47,6 +47,10 @@ Quit
 
 Session and weekly percentages with reset times come directly from claude.ai via the browser extension.
 
+### Background refresh
+
+The extension automatically refreshes usage data every minute, even when the claude.ai tab is not in focus. This keeps the tray icon accurate when you're using Claude via CLI or other tools.
+
 ### Alerts
 
 Desktop notification at every 10% milestone (10%, 20%, ... 90%). Toggle from the menu.
@@ -112,7 +116,7 @@ rm -f ~/.local/bin/claude-meter ~/.config/autostart/claude-usage.desktop
 
 All data is processed locally on your machine. Nothing is sent to any external server, third party, or cloud service.
 
-The extension **does not make any API requests to Claude**. It passively reads data the browser is already loading by intercepting fetch responses — no extra network requests. The only outbound request the extension makes is to **`localhost:52413`** — your own desktop app on your machine.
+The extension intercepts fetch responses that the claude.ai page already makes — no extra network requests while the tab is active. When the tab is in the background, the extension makes one small API request per minute to keep usage data fresh. The only other outbound request is to **`localhost:52413`** — your own desktop app on your machine.
 
 Settings stored locally at `~/.config/claude-meter/settings.json` (Linux) or `~/Library/Application Support/claude-meter/settings.json` (macOS). Only stores notification preference.
 
