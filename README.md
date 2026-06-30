@@ -20,10 +20,18 @@ curl -fsSL https://raw.githubusercontent.com/sijokurian/claude-meter/main/instal
 
 ### 2. Install the browser extension
 
+Clone or download this repo to get the extension files:
+
+```bash
+git clone https://github.com/sijokurian/claude-meter.git
+```
+
+Then load it in Chrome:
+
 1. Open `chrome://extensions` in Chrome (or any Chromium-based browser)
 2. Enable **Developer mode** (toggle in the top-right)
 3. Click **Load unpacked**
-4. Select the `extension/` folder inside this repo
+4. Select the `extension/` folder from the cloned repo
 
 ### 3. Login to [claude.ai](https://claude.ai) in Chrome
 
