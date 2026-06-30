@@ -4,6 +4,8 @@ Real-time Claude usage in your system tray. Single Go binary — requires the br
 
 ![claude-meter icon](claude_icon.png)
 
+![claude-meter screenshot](screenshot.png)
+
 Works on **macOS** and **Ubuntu/Linux**.
 
 ---
