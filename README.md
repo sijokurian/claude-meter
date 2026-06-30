@@ -32,6 +32,11 @@ Then load it in Chrome:
 2. Enable **Developer mode** (toggle in the top-right)
 3. Click **Load unpacked**
 4. Select the `extension/` folder from the cloned repo
+5. **Enable "Apps on device" for claude.ai.** Open (or reload) `claude.ai`, then click the **site controls icon** just left of the address bar (the sliders/tune icon). In the popup, turn on the **Apps on device** toggle, then reload the claude.ai tab.
+
+![Enable Apps on device for claude.ai](apps-on-device.png)
+
+Without this permission the extension cannot read usage data from the page, and the tray will keep showing "extension not connected".
 
 ### 3. Login to [claude.ai](https://claude.ai) in Chrome
 
