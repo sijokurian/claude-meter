@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	refreshInterval = 30 * time.Second
-	httpPort        = 52413
+	refreshInterval  = 30 * time.Second
+	httpPort         = 52413
+	staleThreshold   = 5 * time.Minute
 )
 
 type AppState struct {
@@ -92,7 +93,20 @@ func refreshLoop() {
 }
 
 func isConnected() bool {
-	return state.WebPct != nil || len(state.WebSections) > 0
+	if state.WebPct == nil && len(state.WebSections) == 0 {
+		return false
+	}
+	if state.WebLastUpdate == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, state.WebLastUpdate)
+	if err != nil {
+		t, err = time.Parse(time.RFC3339Nano, state.WebLastUpdate)
+	}
+	if err != nil {
+		return false
+	}
+	return time.Since(t) < staleThreshold
 }
 
 func doRefresh() {

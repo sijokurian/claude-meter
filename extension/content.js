@@ -32,6 +32,13 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    dbg('Tab became visible, refreshing usage');
+    fetchUsageDirect();
+  }
+});
+
 async function fetchUsageDirect() {
   if (!lastUsageUrl) return;
   dbg('Background fetch:', lastUsageUrl);
@@ -126,7 +133,8 @@ async function sendToTray(usage) {
   };
 
   const payloadStr = JSON.stringify({ p: payload.percentage, s: payload.sections });
-  if (now - lastSent < MIN_SEND_INTERVAL_MS && payloadStr === lastPayloadStr) return;
+  const stale = now - lastSent > 120_000;
+  if (!stale && now - lastSent < MIN_SEND_INTERVAL_MS && payloadStr === lastPayloadStr) return;
   lastSent = now;
   lastPayloadStr = payloadStr;
 
